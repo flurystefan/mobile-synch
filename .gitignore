@@ -1,6 +1,7 @@
 __pycache__/
 json/
 py/
+results/
 *.egg-info/
 *.egg
 MANIFEST
