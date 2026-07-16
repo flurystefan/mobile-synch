@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -23,7 +22,8 @@ from pathlib import Path
 import pywintypes
 import win32com.client
 
-from scan_phone_media import CSIDL_DRIVES, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, classify
+from media_naming import is_valid_name
+from scan_phone_media import CSIDL_DRIVES, classify
 
 DEFAULT_DEVICE_NAME = "S23 Ultra von Stefan"
 DEFAULT_PERSON = "stefan"
@@ -31,8 +31,6 @@ DEFAULT_PERSON = "stefan"
 REPO_ROOT = Path(__file__).resolve().parent
 JSON_DIR = REPO_ROOT / "json"
 RESULTS_DIR = REPO_ROOT / "results"
-
-NAME_PATTERN = re.compile(r"^(\d{8})_(\d{6})(?:_\d+)?$")
 
 logger = logging.getLogger("check_phone_media_names")
 
@@ -99,18 +97,6 @@ def resolve_path(device_root, relative_path: str):
             )
         folder = item.GetFolder
     return folder
-
-
-def is_valid_name(stem: str) -> bool:
-    match = NAME_PATTERN.match(stem)
-    if not match:
-        return False
-    date_part, time_part = match.group(1), match.group(2)
-    try:
-        datetime.strptime(f"{date_part}_{time_part}", "%Y%m%d_%H%M%S")
-    except ValueError:
-        return False
-    return True
 
 
 def check_folder(folder, relative_path: str, violations: list[dict]) -> None:
