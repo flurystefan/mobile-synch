@@ -1,0 +1,10 @@
+services:
+  fotokarten:
+    build: .
+    container_name: fotokarten
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      # Pfad links an die tatsaechliche Lage auf dem NAS anpassen.
+      - /volume1/PhoneMirror/stefan/gis/geoparquet:/data/geoparquet:ro

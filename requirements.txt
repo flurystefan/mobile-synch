@@ -1,3 +1,5 @@
 pywin32
 openpyxl
 Pillow
+geopandas
+shapely

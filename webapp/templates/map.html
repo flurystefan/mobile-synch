@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>{{ album }}</title>
+<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="/static/vendor/leaflet-geocoder/Control.Geocoder.css">
+<style>
+  html, body { height: 100%; margin: 0; }
+  #map { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
+  .back-link {
+    position: absolute;
+    top: 10px;
+    left: 50px;
+    z-index: 1000;
+    background: #fff;
+    padding: 6px 12px;
+    border-radius: 6px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 0.9rem;
+    text-decoration: none;
+    color: #1a1a1a;
+  }
+  .popup-thumb { display: block; max-width: 260px; max-height: 260px; border-radius: 4px; }
+  .popup-caption { font-size: 0.8rem; margin-top: 4px; color: #333; }
+  .leaflet-control-zoomtopoints a {
+    font-weight: bold;
+    font-size: 16px;
+  }
+</style>
+</head>
+<body>
+<a class="back-link" href="/">&larr; Alben</a>
+<div id="map"></div>
+
+<script src="/static/vendor/leaflet/leaflet.js"></script>
+<script src="/static/vendor/leaflet-geocoder/Control.Geocoder.js"></script>
+<script>
+const album = {{ album | tojson }};
+
+const map = L.map("map", { zoomControl: true }).setView([47.0, 8.0], 6);
+
+const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19,
+  attribution: "&copy; OpenStreetMap"
+}).addTo(map);
+
+const esriImagery = L.tileLayer(
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+  { maxZoom: 19, attribution: "Esri World Imagery" }
+);
+
+L.control.layers({ "OpenStreetMap": osm, "Esri Satellit": esriImagery }).addTo(map);
+
+L.Control.geocoder({ defaultMarkGeocode: true, placeholder: "Ort suchen..." }).addTo(map);
+
+const ZoomToPointsControl = L.Control.extend({
+  options: { position: "topleft" },
+  onAdd: function () {
+    const container = L.DomUtil.create("div", "leaflet-bar leaflet-control leaflet-control-zoomtopoints");
+    const link = L.DomUtil.create("a", "", container);
+    link.href = "#";
+    link.title = "Auf alle Bilder zoomen";
+    link.innerHTML = "&#9678;";
+    L.DomEvent.on(link, "click", function (e) {
+      L.DomEvent.stop(e);
+      if (markersLayer.getLayers().length) {
+        map.fitBounds(markersLayer.getBounds(), { padding: [30, 30] });
+      }
+    });
+    return container;
+  }
+});
+map.addControl(new ZoomToPointsControl());
+
+const markersLayer = L.featureGroup().addTo(map);
+const sharedPopup = L.popup({ maxWidth: 280, closeButton: true, autoClose: true, closeOnClick: false });
+
+function showPhoto(latlng, filename, datetime) {
+  const thumbUrl = "/api/thumbnail/" + album.split("/").map(encodeURIComponent).join("/") + "/" + encodeURIComponent(filename);
+  const caption = (datetime || "") + "<br>" + filename;
+  sharedPopup
+    .setLatLng(latlng)
+    .setContent('<img class="popup-thumb" src="' + thumbUrl + '"><div class="popup-caption">' + caption + '</div>')
+    .openOn(map);
+}
+
+fetch("/api/points/" + album.split("/").map(encodeURIComponent).join("/"))
+  .then(function (resp) { return resp.json(); })
+  .then(function (points) {
+    points.forEach(function (p) {
+      const marker = L.circleMarker([p.lat, p.lon], {
+        radius: 7,
+        color: "#1a73e8",
+        weight: 2,
+        fillColor: "#4285f4",
+        fillOpacity: 0.85
+      });
+      marker.on("click", function () {
+        showPhoto(marker.getLatLng(), p.filename, p.datetime);
+      });
+      marker.addTo(markersLayer);
+    });
+    if (markersLayer.getLayers().length) {
+      map.fitBounds(markersLayer.getBounds(), { padding: [30, 30] });
+    }
+  });
+</script>
+</body>
+</html>
