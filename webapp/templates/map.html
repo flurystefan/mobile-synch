@@ -23,8 +23,66 @@
     text-decoration: none;
     color: #1a1a1a;
   }
-  .popup-thumb { display: block; max-width: 260px; max-height: 260px; border-radius: 4px; }
+  .popup-thumb { display: block; max-width: 260px; max-height: 260px; border-radius: 4px; cursor: pointer; }
   .popup-caption { font-size: 0.8rem; margin-top: 4px; color: #333; }
+  .popup-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .popup-nav-btn {
+    border: none;
+    background: #f0f0f0;
+    border-radius: 6px;
+    width: 32px;
+    height: 32px;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .popup-nav-btn:active { background: #ddd; }
+  .popup-index { font-size: 0.8rem; color: #555; }
+
+  /* Dieselbe Galerie (Nav + Bild + Bildunterschrift), nur bildschirmfuellend.
+     Klick auf das Bild schaltet zwischen Popup und dieser Ansicht um. */
+  #fs-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.95);
+    z-index: 2000;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+    box-sizing: border-box;
+  }
+  #fs-overlay.visible { display: flex; }
+  #fs-overlay .popup-nav { width: 100%; max-width: 95vw; }
+  #fs-overlay .popup-nav-btn {
+    width: 44px;
+    height: 44px;
+    font-size: 24px;
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
+  }
+  #fs-overlay .popup-nav-btn:active { background: rgba(255, 255, 255, 0.3); }
+  #fs-overlay .popup-index { color: #ddd; }
+  #fs-overlay .popup-thumb {
+    max-width: 95vw;
+    max-height: 80vh;
+    width: auto;
+    height: auto;
+    border-radius: 0;
+  }
+  #fs-overlay .popup-caption { color: #ddd; text-align: center; }
+
+  /* Leaflet-Panes koennen eine eigene Stacking-Ebene aufmachen, in der ein
+     hoher z-index auf #fs-overlay allein nicht zuverlaessig gewinnt. Daher
+     das kleine Popup waehrend des Vollbilds explizit ausblenden. */
+  body.fs-active .leaflet-popup { visibility: hidden; }
   .leaflet-control-zoomtopoints a {
     font-weight: bold;
     font-size: 16px;
@@ -34,6 +92,7 @@
 <body>
 <a class="back-link" href="/">&larr; Alben</a>
 <div id="map"></div>
+<div id="fs-overlay"></div>
 
 <script src="/static/vendor/leaflet/leaflet.js"></script>
 <script src="/static/vendor/leaflet-geocoder/Control.Geocoder.js"></script>
@@ -77,32 +136,204 @@ map.addControl(new ZoomToPointsControl());
 
 const markersLayer = L.featureGroup().addTo(map);
 const sharedPopup = L.popup({ maxWidth: 280, closeButton: true, autoClose: true, closeOnClick: false });
+const fsOverlay = document.getElementById("fs-overlay");
 
-function showPhoto(latlng, filename, datetime) {
-  const thumbUrl = "/api/thumbnail/" + album.split("/").map(encodeURIComponent).join("/") + "/" + encodeURIComponent(filename);
-  const caption = (datetime || "") + "<br>" + filename;
-  sharedPopup
-    .setLatLng(latlng)
-    .setContent('<img class="popup-thumb" src="' + thumbUrl + '"><div class="popup-caption">' + caption + '</div>')
-    .openOn(map);
+let activePhotos = [];
+let activeIndex = 0;
+let isFullscreen = false;
+
+function thumbnailUrl(filename) {
+  return "/api/thumbnail/" + album.split("/").map(encodeURIComponent).join("/") + "/" + encodeURIComponent(filename);
+}
+
+function photoUrl(filename) {
+  return "/api/photo/" + album.split("/").map(encodeURIComponent).join("/") + "/" + encodeURIComponent(filename);
+}
+
+// Baut denselben Inhalt (Nav + Bild + Bildunterschrift) fuer das kleine Popup
+// UND die bildschirmfuellende Ansicht. Im Vollbild wird das Originalbild
+// geladen (photoUrl) statt des kleinen 600px-Thumbnails, sonst wirkt das
+// hochskalierte Bild "milchig".
+function buildGalleryContent(fullscreen) {
+  const photos = activePhotos;
+  const index = activeIndex;
+  const container = document.createElement("div");
+
+  if (photos.length > 1) {
+    const nav = document.createElement("div");
+    nav.className = "popup-nav";
+
+    const prevBtn = document.createElement("button");
+    prevBtn.className = "popup-nav-btn";
+    prevBtn.type = "button";
+    prevBtn.innerHTML = "&lsaquo;";
+    prevBtn.onclick = function (e) {
+      e.stopPropagation();
+      activeIndex = (activeIndex - 1 + activePhotos.length) % activePhotos.length;
+      refresh();
+    };
+
+    const label = document.createElement("span");
+    label.className = "popup-index";
+    label.textContent = (index + 1) + " / " + photos.length;
+
+    const nextBtn = document.createElement("button");
+    nextBtn.className = "popup-nav-btn";
+    nextBtn.type = "button";
+    nextBtn.innerHTML = "&rsaquo;";
+    nextBtn.onclick = function (e) {
+      e.stopPropagation();
+      activeIndex = (activeIndex + 1) % activePhotos.length;
+      refresh();
+    };
+
+    nav.appendChild(prevBtn);
+    nav.appendChild(label);
+    nav.appendChild(nextBtn);
+    container.appendChild(nav);
+  }
+
+  const photo = photos[index];
+  const img = document.createElement("img");
+  img.className = "popup-thumb";
+  img.src = fullscreen ? photoUrl(photo.filename) : thumbnailUrl(photo.filename);
+  // Leaflet berechnet die Popup-Groesse beim Oeffnen/Aktualisieren, bevor das
+  // Bild geladen ist. Ohne dieses Update bleibt die Box auf der
+  // Platzhaltergroesse stehen und Querformat-Bilder ragen darueber hinaus.
+  // Im Vollbild-Overlay ist das nicht noetig (dort bestimmen vw/vh die Groesse).
+  img.onload = function () {
+    if (!fullscreen) {
+      sharedPopup.update();
+    }
+  };
+  img.onclick = function (e) {
+    e.stopPropagation();
+    isFullscreen = !isFullscreen;
+    refresh();
+  };
+  container.appendChild(img);
+
+  const captionDiv = document.createElement("div");
+  captionDiv.className = "popup-caption";
+  captionDiv.innerHTML = (photo.datetime || "") + "<br>" + photo.filename;
+  container.appendChild(captionDiv);
+
+  return container;
+}
+
+function refresh() {
+  document.body.classList.toggle("fs-active", isFullscreen);
+  if (isFullscreen) {
+    fsOverlay.innerHTML = "";
+    fsOverlay.appendChild(buildGalleryContent(true));
+    fsOverlay.classList.add("visible");
+  } else {
+    fsOverlay.classList.remove("visible");
+    fsOverlay.innerHTML = "";
+    sharedPopup.setContent(buildGalleryContent(false));
+  }
+}
+
+function showPhotos(latlng, photos) {
+  activePhotos = photos;
+  activeIndex = 0;
+  isFullscreen = false;
+  document.body.classList.remove("fs-active");
+  fsOverlay.classList.remove("visible");
+  fsOverlay.innerHTML = "";
+  sharedPopup.setLatLng(latlng).setContent(buildGalleryContent(false)).openOn(map);
+}
+
+map.on("popupclose", function () {
+  isFullscreen = false;
+  document.body.classList.remove("fs-active");
+  fsOverlay.classList.remove("visible");
+  fsOverlay.innerHTML = "";
+});
+
+const CLUSTER_RADIUS_METERS = 10;
+
+function haversineMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * toRad;
+  const dLon = (lon2 - lon1) * toRad;
+  const a = Math.sin(dLat / 2) ** 2 +
+            Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+// Gruppiert Punkte, die hoechstens radiusMeters auseinanderliegen, zu
+// Clustern (transitiv: liegt A nah bei B und B nah bei C, gehoeren alle drei
+// zusammen, auch wenn A und C selbst weiter als radiusMeters auseinander
+// liegen). Fuer die ueblichen Album-Groessen reicht ein einfacher O(n^2)
+// Union-Find, eine raeumliche Indexierung waere hier ueberdimensioniert.
+function clusterPoints(points, radiusMeters) {
+  const n = points.length;
+  const parent = Array.from({ length: n }, function (_, i) { return i; });
+
+  function find(i) {
+    while (parent[i] !== i) {
+      parent[i] = parent[parent[i]];
+      i = parent[i];
+    }
+    return i;
+  }
+  function union(a, b) {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) {
+      parent[ra] = rb;
+    }
+  }
+
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (haversineMeters(points[i].lat, points[i].lon, points[j].lat, points[j].lon) <= radiusMeters) {
+        union(i, j);
+      }
+    }
+  }
+
+  const clusters = new Map();
+  for (let i = 0; i < n; i++) {
+    const root = find(i);
+    if (!clusters.has(root)) {
+      clusters.set(root, []);
+    }
+    clusters.get(root).push(points[i]);
+  }
+  return Array.from(clusters.values());
 }
 
 fetch("/api/points/" + album.split("/").map(encodeURIComponent).join("/"))
   .then(function (resp) { return resp.json(); })
   .then(function (points) {
-    points.forEach(function (p) {
-      const marker = L.circleMarker([p.lat, p.lon], {
-        radius: 7,
-        color: "#1a73e8",
-        weight: 2,
-        fillColor: "#4285f4",
-        fillOpacity: 0.85
+    const clusters = clusterPoints(points, CLUSTER_RADIUS_METERS);
+
+    clusters.forEach(function (photos) {
+      photos.sort(function (a, b) {
+        return (a.datetime || "").localeCompare(b.datetime || "");
       });
-      marker.on("click", function () {
-        showPhoto(marker.getLatLng(), p.filename, p.datetime);
+
+      // Jeder Punkt bekommt einen eigenen sichtbaren Marker (damit man die
+      // "Punktwolke" sieht), aber alle Marker eines Clusters oeffnen dieselbe
+      // Galerie mit allen Fotos dieses Clusters.
+      photos.forEach(function (photo) {
+        const marker = L.circleMarker([photo.lat, photo.lon], {
+          radius: 7,
+          color: "#1a73e8",
+          weight: 2,
+          fillColor: "#4285f4",
+          fillOpacity: 0.85
+        });
+        marker.on("click", function () {
+          showPhotos(marker.getLatLng(), photos);
+        });
+        marker.addTo(markersLayer);
       });
-      marker.addTo(markersLayer);
     });
+
     if (markersLayer.getLayers().length) {
       map.fitBounds(markersLayer.getBounds(), { padding: [30, 30] });
     }

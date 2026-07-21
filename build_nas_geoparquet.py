@@ -23,12 +23,18 @@ Durchsucht wird das Verzeichnis unter json/<person>-mobile-dirs.json ->
 
 Zusaetzlich entsteht pro Verzeichnis (mit demselben Pfad-Spiegel wie beim
 GeoParquet):
-- eine File Geodatabase unter results/fgdb/<person>/... mit einer
-  Punkt-Feature-Class ("photos"), bei der die Thumbnails als Attachments
-  hinterlegt sind - damit zeigt ArcGIS Pro das Bild automatisch im Popup an
-  (bei reinem GeoParquet mit Blob-Feld geht das nicht).
-- ein ArcGIS Pro Projekt unter results/AGP/<person>/... mit einer Map, in
-  der die Feature Class aus der zugehoerigen FGDB bereits geladen ist.
+- eine File Geodatabase mit einer Punkt-Feature-Class ("photos"), bei der
+  die Thumbnails als Attachments hinterlegt sind - damit zeigt ArcGIS Pro
+  das Bild automatisch im Popup an (bei reinem GeoParquet mit Blob-Feld
+  geht das nicht).
+- ein ArcGIS Pro Projekt mit einer Map, in der die Feature Class aus der
+  zugehoerigen FGDB bereits geladen ist.
+
+Alle drei (geoparquet/fgdb/AGP) werden direkt unter
+<output-nas-base>/<person>/gis/{geoparquet,fgdb,AGP} geschrieben (Default
+fuer output-nas-base: \\\\DS923Plus\\PhoneMirror) - nicht lokal, damit z.B.
+die Fotokarten-Webapp (Docker auf dem NAS) direkt darauf zugreifen kann.
+Nur der "ohne GPS/EXIF"-Report (JSON+Excel) landet lokal im results/-Ordner.
 
 Benoetigt arcpy, also eine Python-Umgebung mit ArcGIS Pro Lizenz.
 """
@@ -57,6 +63,7 @@ from scan_phone_media import classify
 
 DEFAULT_PERSON = "stefan"
 DEFAULT_NAS_KEY = "DCIM"
+DEFAULT_OUTPUT_NAS_BASE = r"\\DS923Plus\PhoneMirror"
 THUMBNAIL_MAX_SIZE = 600
 
 GDB_FEATURE_CLASS = "photos"
@@ -207,7 +214,7 @@ def relocate_import_log(gdb_dir: Path) -> None:
     target = RESULTS_DIR / "ImportLog"
     target.mkdir(exist_ok=True)
     for item in import_log.iterdir():
-        item.rename(target / item.name)
+        shutil.move(str(item), str(target / item.name))
     import_log.rmdir()
 
 
@@ -380,6 +387,11 @@ def main() -> int:
     parser.add_argument("--person", default=None, help="Person, deren Verzeichnisliste genutzt wird (z.B. stefan, pia)")
     parser.add_argument("--nas-key", default=DEFAULT_NAS_KEY, help="Schluessel unter 'nas-speicher' im json (Default: DCIM)")
     parser.add_argument(
+        "--output-nas-base",
+        default=DEFAULT_OUTPUT_NAS_BASE,
+        help=f"NAS-Basispfad, unter dem <person>/gis/{{geoparquet,fgdb,AGP}} geschrieben wird (Default: {DEFAULT_OUTPUT_NAS_BASE})",
+    )
+    parser.add_argument(
         "--dirs",
         default=None,
         help="Kommagetrennte Liste von Verzeichnissen (relativ zum NAS-Root), die statt des "
@@ -412,8 +424,8 @@ def main() -> int:
         args.dirs = None if answer.strip().lower() in ("", "alle", "all") else answer
 
     logger.info(
-        "Person: %s  NAS-Key: %s  Only-Missing: %s  Dirs: %s",
-        person, args.nas_key, only_missing, args.dirs or "alle",
+        "Person: %s  NAS-Key: %s  Only-Missing: %s  Dirs: %s  Ausgabe-Basis: %s",
+        person, args.nas_key, only_missing, args.dirs or "alle", args.output_nas_base,
     )
 
     try:
@@ -427,7 +439,7 @@ def main() -> int:
         return 1
 
     RESULTS_DIR.mkdir(exist_ok=True)
-    person_root = RESULTS_DIR / person
+    person_root = Path(args.output_nas_base) / person / "gis"
     output_root = person_root / "geoparquet"
     fgdb_root = person_root / "fgdb"
     aprx_root = person_root / "AGP"
