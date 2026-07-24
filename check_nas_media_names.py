@@ -119,7 +119,7 @@ def process_directory(directory: Path, mode: str, skip_hidden: bool, results: di
             results["no_exif"].append(
                 {"path": str(entry.parent), "name": entry.name, "type": kind}
             )
-            logger.info("Kein EXIF-Datum: %s", entry)
+            logger.debug("Kein EXIF-Datum: %s", entry)
             continue
 
         new_stem = exif_dt.strftime("%Y%m%d_%H%M%S")
